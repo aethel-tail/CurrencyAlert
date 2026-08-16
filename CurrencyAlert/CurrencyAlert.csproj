@@ -1,12 +1,7 @@
-﻿<Project Sdk="Dalamud.NET.Sdk/13.0.0">
+﻿<Project Sdk="Dalamud.NET.Sdk/15.0.0">
     <PropertyGroup>
-        <PackageProjectUrl>https://github.com/MidoriKami/CurrencyAlert.git</PackageProjectUrl>
-        <Version>2.2.2.3</Version>
+        <PackageProjectUrl>https://github.com/aethel-tail/CurrencyAlert</PackageProjectUrl>
+        <Version>3.0.0.0</Version>
         <LangVersion>preview</LangVersion>
     </PropertyGroup>
-
-    <ItemGroup>
-        <ProjectReference Include="..\KamiLib\KamiLib.csproj" />
-        <ProjectReference Include="..\KamiToolKit\KamiToolKit.csproj" />
-    </ItemGroup>
 </Project>

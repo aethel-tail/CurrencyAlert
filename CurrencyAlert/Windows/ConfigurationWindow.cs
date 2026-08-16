@@ -1,192 +1,124 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Drawing;
-using System.Linq;
 using System.Numerics;
 using CurrencyAlert.Classes;
 using Dalamud.Bindings.ImGui;
-using Dalamud.Game.Text;
-using Dalamud.Interface;
-using Dalamud.Interface.Components;
 using Dalamud.Interface.Utility;
 using Dalamud.Interface.Utility.Raii;
-using KamiLib.Classes;
-using KamiLib.CommandManager;
-using KamiLib.Window;
-using KamiLib.Window.SelectionWindows;
-using KamiToolKit.Classes;
-using Lumina.Excel.Sheets;
+using Dalamud.Interface.Windowing;
 
 namespace CurrencyAlert.Windows;
 
-public class ConfigurationWindow : TabbedSelectionWindow<TrackedCurrency> {
+public class ConfigurationWindow : Window {
+    private TrackedCurrency? selected;
 
-    public ConfigurationWindow() : base("CurrencyAlert Configuration Window", new Vector2(450.0f, 400.0f)) {
-        System.CommandManager.RegisterCommand(new CommandHandler {
-            Delegate = _ => Toggle(), ActivationPath = "/",
-        });
+    public ConfigurationWindow() : base("CurrencyAlert Configuration") {
+        Size = new Vector2(700.0f, 450.0f);
+        SizeCondition = ImGuiCond.FirstUseEver;
     }
 
-    protected override List<TrackedCurrency> Options => System.Config.Currencies;
-    
-    protected override float SelectionListWidth => 150.0f;
-    
-    protected override float SelectionItemHeight => 20.0f;
-    
-    protected override bool AllowChildScroll => false;
-    
-    protected override string SelectionListTabName => "Tracked Currencies";
-    
-    protected override bool ShowListButton => true;
+    public override void Draw() {
+        DrawCurrencyList();
+        ImGui.SameLine();
+        using (var child = ImRaii.Child("##rightSide", Vector2.Zero, true)) {
+            if (child.Success) {
+                DrawRightSide();
+            }
+        }
+    }
 
-    protected override List<ITabItem> Tabs { get; } = [
-        new GeneralSettingsTab(),
-        new ListNodeSettingsTab(),
-        new CurrencyNodeSettingsTab(),
-    ];
+    private void DrawCurrencyList() {
+        using var child = ImRaii.Child("##currencyList", new Vector2(200.0f * ImGuiHelpers.GlobalScale, 0.0f), true);
+        if (!child.Success) return;
 
-    protected override void DrawListOption(TrackedCurrency option) {
-        // If ID is zero, and type is LimitedTomestone, then the limited tomestone doesn't exist.
-        // This only happens between expansion release and the release of savage, so this won't be relevant again for 2-3 years.
-        if (option is { ItemId: 0, Type: CurrencyType.LimitedTomestone }) {
-            ImGui.SetCursorPosY(ImGui.GetCursorPosY() - 3.0f * ImGuiHelpers.GlobalScale);
-            ImGui.Image(Service.TextureProvider.GetFromGameIcon(60071).GetWrapOrEmpty().Handle, ImGuiHelpers.ScaledVector2(24.0f));
+        var buttonHeight = ImGui.GetFrameHeightWithSpacing();
+        using (var listChild = ImRaii.Child("##list", new Vector2(0.0f, -buttonHeight))) {
+            if (listChild.Success) {
+                for (var i = 0; i < System.Config.Currencies.Count; i++) {
+                    var currency = System.Config.Currencies[i];
+                    using var id = ImRaii.PushId(i);
 
-            ImGui.SameLine();
-            ImGui.AlignTextToFramePadding();
-            ImGui.Text("Limited Tomestone (Currently Unavailable)");
+                    var label = currency switch {
+                        { ItemId: 0, Type: CurrencyType.LimitedTomestone } => "Limited Tomestone (Currently Unavailable)",
+                        _ => currency.Name,
+                    };
 
+                    if (ImGui.Selectable(label, selected == currency)) {
+                        selected = currency;
+                    }
+                }
+            }
+        }
+
+        if (ImGui.Button("Item##addItem")) OpenSearchWindow(CurrencyType.Item);
+        ImGui.SameLine();
+        if (ImGui.Button("HQ##addHq")) OpenSearchWindow(CurrencyType.HighQualityItem);
+        ImGui.SameLine();
+        if (ImGui.Button("Collectable##addCollectable")) OpenSearchWindow(CurrencyType.Collectable);
+    }
+
+    private void DrawRightSide() {
+        using var tabBar = ImRaii.TabBar("##tabs");
+        if (!tabBar.Success) return;
+
+        using (var tab = ImRaii.TabItem("Currency")) {
+            if (tab.Success) DrawSelectedCurrency();
+        }
+
+        using (var tab = ImRaii.TabItem("General")) {
+            if (tab.Success) DrawGeneralSettings();
+        }
+
+        using (var tab = ImRaii.TabItem("Overlay Style")) {
+            if (tab.Success) DrawOverlayStyle();
+        }
+    }
+
+    private void DrawSelectedCurrency() {
+        if (selected is null || !System.Config.Currencies.Contains(selected)) {
+            selected = null;
+            ImGui.TextDisabled("Select a currency from the list.");
             return;
         }
 
-        if (option is { Name: var name, Icon: { } icon }) {
-            ImGui.SetCursorPosY(ImGui.GetCursorPosY() - 3.0f * ImGuiHelpers.GlobalScale);
-            ImGui.Image(icon.Handle, ImGuiHelpers.ScaledVector2(24.0f));
+        var currency = selected;
 
-            ImGui.SameLine();
-            ImGui.AlignTextToFramePadding();
-            ImGui.Text(name);
-        }
-        else {
-            ImGui.TextColored(KnownColor.OrangeRed.Vector(), $"Error, unable to display currency. ItemId: {option.ItemId}");
-        }
-    }
-
-    protected override void DrawSelectedOption(TrackedCurrency selectedOption) {
-        DrawHeaderAndWatermark(selectedOption);
-        DrawCurrentStatus(selectedOption);
-        DrawSettings(selectedOption);
-    }
-
-    private void DrawHeaderAndWatermark(TrackedCurrency currency) {
-        var region = ImGui.GetContentRegionAvail();
-        var minDimension = Math.Min(region.X, region.Y);
-
-        // If ID is zero, and type is LimitedTomestone, then the limited tomestone doesn't exist.
-        // This only happens between expansion release and the release of savage, so this won't be relevant again for 2-3 years.
         if (currency is { ItemId: 0, Type: CurrencyType.LimitedTomestone }) {
-            const string text = "Limited Tomestone (Currently Unavailable)";
-            var textSize = ImGui.CalcTextSize(text);
-            ImGui.SetCursorPosX(ImGui.GetContentRegionAvail().X / 2.0f - textSize.X / 2.0f);
-            ImGui.Text(text);
-            ImGui.Separator();
-
-            var areaStart = ImGui.GetCursorPos();
-            ImGui.SetCursorPosX(region.X / 2.0f - minDimension / 2.0f);
-            ImGui.Image(Service.TextureProvider.GetFromGameIcon(60071).GetWrapOrEmpty().Handle, new Vector2(minDimension), Vector2.Zero, Vector2.One, Vector4.One with {
-                W = 0.10f,
-            });
-            ImGui.SetCursorPos(areaStart);
-
+            ImGui.TextDisabled("Limited Tomestone (Currently Unavailable)");
             return;
         }
 
-        if (currency is { Name: var name }) {
-            var textSize = ImGui.CalcTextSize(name);
-            ImGui.SetCursorPosX(ImGui.GetContentRegionAvail().X / 2.0f - textSize.X / 2.0f);
-            ImGui.Text(name);
-            ImGui.Separator();
-
-            var areaStart = ImGui.GetCursorPos();
-            ImGui.SetCursorPosX(region.X / 2.0f - minDimension / 2.0f);
-            ImGui.Image(currency.Icon.Handle, new Vector2(minDimension), Vector2.Zero, Vector2.One, Vector4.One with {
-                W = 0.10f,
-            });
-            ImGui.SetCursorPos(areaStart);
-        }
-    }
-
-    private void DrawCurrentStatus(TrackedCurrency currency) {
-        if (currency is not { CurrentCount: var currentCount, Threshold: var threshold }) return;
-
-        var color = ((float) currentCount / threshold) switch {
-            < 0.75f => currency.Invert ? KnownColor.Red.Vector() : KnownColor.White.Vector(),
-            < 0.85f => currency.Invert ? KnownColor.Red.Vector() : KnownColor.Orange.Vector(),
-            < 0.95f => currency.Invert ? KnownColor.Red.Vector() : KnownColor.OrangeRed.Vector(),
-            > 0.95f and < 1.00f => KnownColor.Red.Vector(),
-            >= 1.00f and < 1.05f => currency.Invert ? KnownColor.OrangeRed.Vector() : KnownColor.Red.Vector(),
-            >= 1.05f and < 1.15f => currency.Invert ? KnownColor.Orange.Vector() : KnownColor.Red.Vector(),
-            >= 1.15f => currency.Invert ? KnownColor.White.Vector() : KnownColor.Red.Vector(),
-            _ => KnownColor.White.Vector(),
-        };
-
-        DrawCurrentStatusTable(currentCount, color, threshold);
-
+        DrawCurrentStatus(currency);
+        ImGui.Separator();
         ImGuiHelpers.ScaledDummy(5.0f);
-    }
 
-    private static void DrawCurrentStatusTable(int currentCount, Vector4 color, int threshold) {
-        using var table = ImRaii.Table("CurrentStatusTable", 3);
-        if (!table) return;
-        
-        ImGui.TableSetupColumn("##CurrentAmount", ImGuiTableColumnFlags.WidthStretch);
-        ImGui.TableSetupColumn("##Slash", ImGuiTableColumnFlags.WidthFixed, 5.0f * ImGuiHelpers.GlobalScale);
-        ImGui.TableSetupColumn("##ThresholdAmount", ImGuiTableColumnFlags.WidthStretch);
-
-        ImGui.TableNextColumn();
-        var text = $"{currentCount}";
-        var currentCountSize = ImGui.CalcTextSize(text);
-        ImGui.SetCursorPosX(ImGui.GetContentRegionAvail().X - currentCountSize.X);
-        ImGui.TextColored(color, text);
-
-        ImGui.TableNextColumn();
-        ImGui.Text("/");
-
-        ImGui.TableNextColumn();
-        ImGui.Text(threshold.ToString());
-    }
-
-    private void DrawSettings(TrackedCurrency currency) {
-        using var id = ImRaii.PushId(currency.ItemId.ToString());
-        
         var configChanged = false;
 
-        configChanged |= ImGui.Checkbox($"Enable", ref currency.Enabled);
+        configChanged |= ImGui.Checkbox("Enable", ref currency.Enabled);
 
         ImGuiHelpers.ScaledDummy(5.0f);
 
-        configChanged |= ImGuiTweaks.Checkbox("Chat Warning", ref currency.ChatWarning, "When amount is above threshold, print a message to chat when changing zones");
-        configChanged |= ImGuiTweaks.Checkbox("Invert", ref currency.Invert, "Warn when below the threshold instead of above");
-        configChanged |= ImGuiTweaks.Checkbox("Overlay", ref currency.ShowInOverlay, "Allows this currency to show in the overlay");
-        configChanged |= ImGuiTweaks.Checkbox("Overlay Show Name", ref currency.ShowItemName, "Show item name in the overlay");
+        configChanged |= Widgets.Checkbox("Chat Warning", ref currency.ChatWarning, "When amount is past threshold, print a message to chat when changing zones");
+        configChanged |= Widgets.Checkbox("Invert", ref currency.Invert, "Warn when below the threshold instead of above");
+        configChanged |= Widgets.Checkbox("Overlay", ref currency.ShowInOverlay, "Allows this currency to show in the overlay");
+        configChanged |= Widgets.Checkbox("Overlay Show Name", ref currency.ShowItemName, "Show item name in the overlay");
 
         ImGuiHelpers.ScaledDummy(5.0f);
 
-        if (ImGui.InputTextWithHint("##WarningText","Warning Text", ref currency.WarningText, 1024)) {
-            configChanged = true;
-        }
+        ImGui.SetNextItemWidth(-1.0f);
+        configChanged |= ImGui.InputTextWithHint("##WarningText", "Warning Text", ref currency.WarningText, 1024);
 
         ImGuiHelpers.ScaledDummy(5.0f);
 
-        ImGui.PushItemWidth(50.0f * ImGuiHelpers.GlobalScale);
-        configChanged |= ImGui.InputInt($"Threshold", ref currency.Threshold, 0, 0);
+        ImGui.SetNextItemWidth(100.0f * ImGuiHelpers.GlobalScale);
+        configChanged |= ImGui.InputInt("Threshold", ref currency.Threshold, 0, 0);
 
-        ImGui.SetCursorPosY(ImGui.GetContentRegionMax().Y - 23.0f * ImGuiHelpers.GlobalScale);
+        ImGuiHelpers.ScaledDummy(10.0f);
+
         using (ImRaii.Disabled(!(ImGui.GetIO().KeyShift && ImGui.GetIO().KeyCtrl && currency.CanRemove))) {
-            if (ImGuiTweaks.IconButtonWithSize(Service.PluginInterface.UiBuilder.IconFontFixedWidthHandle, FontAwesomeIcon.Trash, "Delete", new Vector2(ImGui.GetContentRegionAvail().X, 23.0f * ImGuiHelpers.GlobalScale))) {
+            if (ImGui.Button("Delete##delete", new Vector2(-1.0f, 0.0f))) {
                 System.Config.Currencies.Remove(currency);
-                DeselectItem();
+                selected = null;
                 System.Config.Save();
+                return;
             }
         }
 
@@ -199,340 +131,101 @@ public class ConfigurationWindow : TabbedSelectionWindow<TrackedCurrency> {
         }
     }
 
-    protected override void DrawExtraButton() {
-        using var spacingTable = ImRaii.Table("buttonTable", 3, ImGuiTableFlags.SizingStretchSame);
-        if (!spacingTable) return;
+    private static readonly Vector4 Red = new(1.0f, 0.25f, 0.25f, 1.0f);
+    private static readonly Vector4 Orange = new(1.0f, 0.65f, 0.0f, 1.0f);
+    private static readonly Vector4 OrangeRed = new(1.0f, 0.40f, 0.10f, 1.0f);
+    private static readonly Vector4 White = Vector4.One;
 
-        ImGui.TableNextColumn();
-        if (ImGuiTweaks.IconButtonWithSize(Service.PluginInterface.UiBuilder.IconFontFixedWidthHandle, FontAwesomeIcon.Plus, "addNewCurrency", ImGui.GetContentRegionAvail(), "Add New Normal Item")) {
-            TryCloseAndRemoveItemListWindow();
+    private static void DrawCurrentStatus(TrackedCurrency currency) {
+        var currentCount = currency.CurrentCount;
+        var threshold = currency.Threshold;
 
-            System.WindowManager.AddWindow(new ItemSelectionWindow(Service.PluginInterface) {
-                MultiSelectionCallback = selected => AddSelectedItems(selected, CurrencyType.Item),
-            }, WindowFlags.OpenImmediately);
-        }
+        var color = ((float) currentCount / threshold) switch {
+            < 0.75f => currency.Invert ? Red : White,
+            < 0.85f => currency.Invert ? Red : Orange,
+            < 0.95f => currency.Invert ? Red : OrangeRed,
+            > 0.95f and < 1.00f => Red,
+            >= 1.00f and < 1.05f => currency.Invert ? OrangeRed : Red,
+            >= 1.05f and < 1.15f => currency.Invert ? Orange : Red,
+            >= 1.15f => currency.Invert ? White : Red,
+            _ => White,
+        };
 
-        ImGui.TableNextColumn();
-        if (ImGui.Button($"{SeIconChar.HighQuality.ToIconString()}##hqSearch", ImGui.GetContentRegionAvail())) {
-            TryCloseAndRemoveItemListWindow();
+        ImGui.TextUnformatted($"{currency.Name}");
+        ImGui.SameLine();
+        ImGui.TextColored(color, $"{currentCount:N0}");
+        ImGui.SameLine();
+        ImGui.TextUnformatted($"/ {threshold:N0}");
 
-            System.WindowManager.AddWindow(new HighQualityItemSelectionWindow(Service.PluginInterface) {
-                MultiSelectionCallback = selected => AddSelectedItems(selected, CurrencyType.HighQualityItem),
-            }, WindowFlags.OpenImmediately);
-        }
-
-        if (ImGui.IsItemHovered()) {
-            ImGui.SetTooltip("Add New High Quality Item");
-        }
-
-        ImGui.TableNextColumn();
-        if (ImGui.Button($"{SeIconChar.Collectible.ToIconString()}##collectableSearch", ImGui.GetContentRegionAvail())) {
-            TryCloseAndRemoveItemListWindow();
-
-            System.WindowManager.AddWindow(new CollectableItemSelectionWindow(Service.PluginInterface) {
-                MultiSelectionCallback = selected => AddSelectedItems(selected, CurrencyType.Collectable),
-            }, WindowFlags.OpenImmediately);
-        }
-
-        if (ImGui.IsItemHovered()) {
-            ImGui.SetTooltip("Add New Collectable Item");
-        }
+        ImGuiHelpers.ScaledDummy(5.0f);
     }
 
-    private static void AddSelectedItems(List<Item> selected, CurrencyType type) {
-        foreach (var item in selected.Where(item => !System.Config.Currencies.Any(currency => currency.ItemId == item.RowId))) {
-            System.Config.Currencies.Add(new TrackedCurrency {
-                Enabled = true, Threshold = 1000, Type = type, ItemId = item.RowId,
-            });
-        }
-    }
-
-    private void TryCloseAndRemoveItemListWindow() {
-        if (System.WindowManager.GetWindow<SelectionWindowBase<Item>>() is { } existingWindow) {
-            existingWindow.Close();
-            System.WindowManager.RemoveWindow(existingWindow);
-        }
-    }
-
-    public override void OnClose() {
-        System.OverlayController.Save();
-        System.Config.Save();
-    }
-
-    public override void OnTabChanged() {
-        System.OverlayController.Save();
-        System.Config.Save();
-    }
-}
-
-public class GeneralSettingsTab : ITabItem {
-    public string Name => "Settings";
-    
-    public bool Disabled => false;
-
-    public void Draw() {
+    private static void DrawGeneralSettings() {
         var configChanged = false;
 
-        ImGuiTweaks.Header("General Settings");
-        using (ImRaii.PushIndent()) {
-            configChanged |= ImGui.Checkbox("Enable Chat Warnings", ref System.Config.ChatWarning);
-        }
+        Widgets.Header("General Settings");
+        configChanged |= ImGui.Checkbox("Enable Chat Warnings", ref System.Config.ChatWarning);
 
-        ImGuiTweaks.Header("Overlay Settings");
-        using (ImRaii.PushIndent()) {
-            configChanged |= ImGui.Checkbox("Hide in Duties", ref System.Config.HideInDuties);
-        }
-        
+        Widgets.Header("Overlay Settings");
+        configChanged |= ImGui.Checkbox("Enable Overlay", ref System.Config.OverlayEnabled);
+        configChanged |= ImGui.Checkbox("Hide in Duties", ref System.Config.HideInDuties);
+        configChanged |= Widgets.Checkbox("Disable Interaction", ref System.Config.DisableInteraction,
+            "Makes the overlay click-through and undraggable.\nUncheck to move the overlay or click it to open this window.");
+
         if (configChanged) {
             System.Config.Save();
         }
     }
-}
 
-public class ListNodeSettingsTab : ITabItem {
-    public string Name => "Warning List Style";
-    
-    public bool Disabled => false;
-    
-    public void Draw() {
-        var listNode = System.OverlayController.OverlayListNode;
-        if (listNode is null) return;
-                
-        ImGuiTweaks.Header("General Settings");
+    private static void DrawOverlayStyle() {
+        var config = System.Config;
+        var configChanged = false;
 
-        ImGuiTweaks.SetFullWidth();
-        if (ImGui.Checkbox("Enable", ref System.Config.OverlayEnabled)) {
-            listNode.IsVisible = System.Config.OverlayEnabled;
+        Widgets.Header("Layout");
+
+        var position = config.OverlayPosition;
+        if (ImGui.DragFloat2("Position", ref position, 0.75f, 0.0f, 5000.0f)) {
+            config.OverlayPosition = position;
+            configChanged = true;
         }
 
-        ImGuiHelpers.ScaledDummy(5.0f);
+        var orientation = config.Orientation;
+        if (Widgets.EnumCombo("Orientation", ref orientation)) {
+            config.Orientation = orientation;
+            configChanged = true;
+        }
 
-        var enableMoving = listNode.EnableMoving;
-        if (ImGui.Checkbox("Allow Moving", ref enableMoving)) {
-            listNode.EnableMoving = enableMoving;
-        }
-        
-        var enableResizing = listNode.EnableResizing;
-        if (ImGui.Checkbox("Allow Resizing", ref enableResizing)) {
-            listNode.EnableResizing = enableResizing;
-        }
-        
-        ImGuiHelpers.ScaledDummy(5.0f);
+        configChanged |= ImGui.DragFloat("Item Spacing", ref config.ItemSpacing, 0.10f, 0.0f, 500.0f);
+        configChanged |= ImGui.InputInt("Text Size", ref config.TextSize);
 
-        if (ImGui.Checkbox("Disable Interaction", ref System.Config.DisableInteraction)) {
-            listNode.EnableListEvents = !System.Config.DisableInteraction;
+        Widgets.Header("Appearance");
+
+        configChanged |= ImGui.ColorEdit4("Text Color", ref config.TextColor, ImGuiColorEditFlags.AlphaPreviewHalf);
+        configChanged |= ImGui.Checkbox("Show Background", ref config.ShowBackground);
+        configChanged |= ImGui.ColorEdit4("Background Color", ref config.BackgroundColor, ImGuiColorEditFlags.AlphaPreviewHalf);
+        configChanged |= ImGui.Checkbox("Show Border", ref config.ShowBorder);
+        configChanged |= ImGui.Checkbox("Show Icon", ref config.ShowIcon);
+        configChanged |= ImGui.Checkbox("Show Text", ref config.ShowText);
+        configChanged |= ImGui.Checkbox("Show Item Count", ref config.ShowItemCount);
+
+        if (configChanged) {
+            config.TextSize = int.Clamp(config.TextSize, 8, 96);
+            config.Save();
         }
-        ImGuiComponents.HelpMarker("Disables the tooltip 'Overlay from CurrencyAlert Plugin'\n" +
-                                   "and disables click interactability on the main list node\n\n" +
-                                   "Does not effect individual warning nodes");
-        
-        ImGuiTweaks.Header("Warning List Overlay Style");
-        DrawSimpleModeConfig(listNode);
     }
 
-    private static void DrawSimpleModeConfig(OverlayListNode listNode) {
-        using var table = ImRaii.Table("simple_mode_table", 2);
-        if (!table) return;
-        
-        ImGui.TableSetupColumn("##label", ImGuiTableColumnFlags.WidthStretch, 1.0f);
-        ImGui.TableSetupColumn("##config", ImGuiTableColumnFlags.WidthStretch, 2.0f);
-                
-        ImGui.TableNextRow();
-
-        ImGui.TableNextColumn();
-        ImGui.Text("Position");
-                        
-        ImGui.TableNextColumn();
-        var position = listNode.Position;
-        ImGuiTweaks.SetFullWidth();
-        if (ImGui.DragFloat2("##position", ref position, 0.75f, 0.0f, 5000.0f)) {
-            listNode.Position = position;
-        }
-        
-        ImGui.TableNextColumn();
-        ImGui.Text("Size");
-                
-        ImGui.TableNextColumn();
-        var size = listNode.Size;
-        ImGuiTweaks.SetFullWidth();
-        if (ImGui.DragFloat2("##size", ref size, 0.75f, 0.0f, 5000.0f)) {
-            listNode.Size = size;
-        }
-             
-        ImGui.TableNextColumn();
-        ImGui.Text("Scale");
-        
-        ImGui.TableNextColumn();
-        ImGuiTweaks.SetFullWidth();
-        var scale = listNode.Scale.X;
-        if (ImGui.DragFloat("##Scale", ref scale, 0.005f, 0.10f, 3.0f)) {
-            listNode.ScaleX = scale;
-            listNode.ScaleY = scale;
-        }
-        
-        ImGui.TableNextColumn();
-        ImGui.Text("Background Color");
-                
-        ImGui.TableNextColumn();
-        var backgroundColor = listNode.BackgroundColor;
-        ImGuiTweaks.SetFullWidth();
-        if (ImGui.ColorEdit4("##BackgroundColor", ref backgroundColor, ImGuiColorEditFlags.AlphaPreviewHalf)) {
-            listNode.BackgroundColor = backgroundColor;
-        }
-                
-        ImGui.TableNextColumn();
-        ImGui.Text("List Orientation");
-                
-        ImGui.TableNextColumn();
-        var orientation = listNode.LayoutOrientation;
-        ImGuiTweaks.SetFullWidth();
-        if (ComboHelper.EnumCombo("##Orientation", ref orientation)) {
-            listNode.LayoutOrientation = orientation;
-        }
-        
-        ImGui.TableNextColumn();
-        ImGui.Text("List Anchor");
-                
-        ImGui.TableNextColumn();
-        var anchor = listNode.LayoutAnchor;
-        ImGuiTweaks.SetFullWidth();
-        if (ComboHelper.EnumCombo("##Anchor", ref anchor)) {
-            listNode.LayoutAnchor = anchor;
-        }
-        
-        ImGui.TableNextColumn();
-        ImGui.Text("First Item Spacing");
-        
-        ImGui.TableNextColumn();
-        var firstItemSpacing = listNode.FirstItemSpacing;
-        ImGuiTweaks.SetFullWidth();
-        if (ImGui.DragFloat("##FirstItemSpacing", ref firstItemSpacing, 0.10f, -30.0f, 5000.0f)) {
-            listNode.FirstItemSpacing = firstItemSpacing;
+    private static void OpenSearchWindow(CurrencyType type) {
+        if (System.ItemSearchWindow is not null) {
+            System.WindowSystem.RemoveWindow(System.ItemSearchWindow);
         }
 
-        ImGui.TableNextColumn();
-        ImGui.Text("Item Spacing");
-        
-        ImGui.TableNextColumn();
-        var categorySpacing = listNode.ItemSpacing;
-        ImGuiTweaks.SetFullWidth();
-        if (ImGui.DragFloat("##ItemSpacing", ref categorySpacing, 0.10f, -30.0f, 5000.0f)) {
-            listNode.ItemSpacing = categorySpacing;
-        }
-
-        ImGui.TableNextColumn();
-        ImGui.Text("Show Background");
-        
-        ImGui.TableNextColumn();
-        var background = listNode.ShowBackground;
-        ImGuiTweaks.SetFullWidth();
-        if (ImGui.Checkbox("##BackgroundVisible", ref background)) {
-            listNode.ShowBackground = background;
-        }
-
-        ImGui.TableNextColumn();
-        ImGui.Text("Show Border");
-
-        ImGui.TableNextColumn();
-        var border = listNode.ShowBorder;
-        ImGuiTweaks.SetFullWidth();
-        if (ImGui.Checkbox("##BorderVisible", ref border)) {
-            listNode.ShowBorder = border;
-        }
-    }
-}
-
-public class CurrencyNodeSettingsTab : ITabItem {
-    public string Name => "Currency Node Style";
-    
-    public bool Disabled => false;
-    
-    public void Draw() {
-        var listNode = System.OverlayController.OverlayListNode;
-        if (listNode is null) return;
-
-        var sampleNode = System.OverlayController.SampleNode;
-                
-        ImGuiTweaks.Header("Currency Node Overlay Style");
-        DrawSimpleModeConfig(sampleNode, listNode);
+        System.ItemSearchWindow = new ItemSearchWindow(type) {
+            IsOpen = true,
+        };
+        System.WindowSystem.AddWindow(System.ItemSearchWindow);
     }
 
-    private void DrawSimpleModeConfig(CurrencyWarningNode sampleNode, OverlayListNode overlayNode) {
-        using var table = ImRaii.Table("simple_mode_table", 2);
-        if (!table) return;
-        
-        ImGui.TableSetupColumn("##label", ImGuiTableColumnFlags.WidthStretch, 1.0f);
-        ImGui.TableSetupColumn("##config", ImGuiTableColumnFlags.WidthStretch, 2.0f);
-                
-        ImGui.TableNextRow();
-        
-        ImGui.TableNextColumn();
-        ImGui.Text("Text Color");
-        
-        ImGui.TableNextColumn();
-        var textColor = sampleNode.TextColor;
-        ImGuiTweaks.SetFullWidth();
-        if (ImGui.ColorEdit4("##TextColor", ref textColor, ImGuiColorEditFlags.AlphaPreviewHalf)) {
-            sampleNode.TextColor = textColor;
-        }
-        
-        ImGui.TableNextColumn();
-        ImGui.Text("Text Font");
-        
-        ImGui.TableNextColumn();
-        var textFont = sampleNode.LabelFont;
-        ImGuiTweaks.SetFullWidth();
-        if (ComboHelper.EnumCombo("##TextFont", ref textFont)) {
-            sampleNode.LabelFont = textFont;
-        }
-
-        ImGui.TableNextColumn();
-        ImGui.Text("Text Size");
-        
-        ImGui.TableNextColumn();
-        var textSize = sampleNode.TextSize;
-        ImGuiTweaks.SetFullWidth();
-        if (ImGui.InputInt("##TextSize", ref textSize)) {
-            sampleNode.TextSize = textSize;
-        }
-        
-        ImGui.TableNextColumn();
-        ImGui.Text("Show Icon");
-        
-        ImGui.TableNextColumn();
-        var showIcon = sampleNode.ShowIcon;
-        ImGuiTweaks.SetFullWidth();
-        if (ImGui.Checkbox("##ShowIcon", ref showIcon)) {
-            sampleNode.ShowIcon = showIcon;
-        }
-        
-        ImGui.TableNextColumn();
-        ImGui.Text("Show Text");
-        
-        ImGui.TableNextColumn();
-        var showText = sampleNode.ShowText;
-        ImGuiTweaks.SetFullWidth();
-        if (ImGui.Checkbox("##ShowText", ref showText)) {
-            sampleNode.ShowText = showText;
-        }
-        
-        ImGui.TableNextColumn();
-        ImGui.Text("Show Item Count");
-
-        ImGui.TableNextColumn();
-        var showItemCount = sampleNode.ShowItemCount;
-        ImGuiTweaks.SetFullWidth();
-        if (ImGui.Checkbox("##ShowItemCount", ref showItemCount)) {
-            sampleNode.ShowItemCount = showItemCount;
-        }
-        
-        ApplyAll(sampleNode, overlayNode);
-    }
-
-    private void ApplyAll(CurrencyWarningNode referenceNode, OverlayListNode overlayListNode) {
-        foreach (var node in overlayListNode.NodeList) {
-            node.Load(referenceNode, "Position", "Size");
-            node.RecalculateLayout();
-        }
+    public override void OnClose() {
+        System.Config.Save();
     }
 }

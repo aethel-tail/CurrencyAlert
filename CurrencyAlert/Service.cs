@@ -1,4 +1,4 @@
-﻿using Dalamud.IoC;
+using Dalamud.IoC;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 
@@ -14,4 +14,6 @@ public class Service {
     [PluginService] public static IPluginLog Log { get; set; }
     [PluginService] public static IFramework Framework { get; set; }
     [PluginService] public static ICondition Condition { get; set; }
+    [PluginService] public static ICommandManager CommandManager { get; set; }
+    [PluginService] public static IGameGui GameGui { get; set; }
 }

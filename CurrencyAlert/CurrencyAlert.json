@@ -1,10 +1,10 @@
 {
-  "Author": "MidoriKami, Lharz",
+  "Author": "MidoriKami, Lharz, aethel-tail",
   "Name": "CurrencyAlert",
-  "Punchline": "Display alerts upon reaching configurable currencies thresholds.",
-  "Description": "This plugin lets you easily manage your various currencies to prevent from wasting precious resources.",
+  "Punchline": "货币数量达到设定阈值时发出提醒。",
+  "Description": "轻松管理你的各类货币，支持聊天提醒和悬浮 Overlay，防止资源溢出浪费。可追踪游戏内任意物品。",
   "Tags": [    "Currency",    "Tomestones",    "Alert",    "Tracker"  ],
   "InternalName": "CurrencyAlert",
-  "RepoUrl": "https://github.com/MidoriKami/CurrencyAlert",
+  "RepoUrl": "https://github.com/aethel-tail/CurrencyAlert",
   "AcceptsFeedback": false
 }

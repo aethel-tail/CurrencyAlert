@@ -1,0 +1,48 @@
+name: Release CurrencyAlert
+
+on:
+  push:
+    tags: [ "v*" ]
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: windows-2022
+
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v5
+
+    - name: Install .NET
+      uses: actions/setup-dotnet@v5
+      with:
+        dotnet-version: 10.0.x
+
+    - name: Download Dalamud
+      run: |
+        Invoke-WebRequest -Uri https://goatcorp.github.io/dalamud-distrib/latest.zip -OutFile latest.zip
+        Expand-Archive -Force latest.zip "$env:AppData\XIVLauncherCN\addon\Hooks\dev"
+
+    - name: Set version from tag
+      run: |
+        $tag = "${{ github.ref_name }}"
+        $ver = $tag -replace '^v', ''
+        if ($ver -notmatch '^\d') { $ver = "0.0.0" }  # workflow_dispatch without tag
+        echo "VERSION=$ver" >> $env:GITHUB_ENV
+
+    - name: Build
+      run: dotnet build --configuration Release -p:Version=$env:VERSION
+
+    - name: Package
+      run: |
+        $BuiltZip = ".\CurrencyAlert\bin\x64\Release\CurrencyAlert\latest.zip"
+        Copy-Item -Path $BuiltZip -Destination "latest.zip" -Force
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: latest.zip
+        generate_release_notes: true

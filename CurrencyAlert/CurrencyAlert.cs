@@ -1,37 +1,43 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.Linq;
 using CurrencyAlert.Classes;
 using CurrencyAlert.Windows;
+using Dalamud.Game.ClientState.Conditions;
+using Dalamud.Game.Command;
+using Dalamud.Interface.Windowing;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
-using KamiLib.CommandManager;
-using KamiLib.Window;
-using KamiToolKit;
 
 namespace CurrencyAlert;
 
 public sealed class CurrencyAlertPlugin : IDalamudPlugin {
     public CurrencyAlertPlugin(IDalamudPluginInterface pluginInterface) {
         pluginInterface.Create<Service>();
-        
-        System.Config = Configuration.Load();
-        System.CommandManager = new CommandManager(Service.PluginInterface, "currencyalert", "calert");
 
-        if (System.Config is { Currencies.Count: 0 } or { Currencies: null } or { Version: not 7 }) {
+        System.Config = Configuration.Load();
+
+        if (System.Config.Currencies is null or { Count: 0 }) {
             Service.Log.Verbose("Generating Initial Currency List.");
 
             System.Config.Currencies = GenerateInitialList();
-            System.Config.Version = 7;
             System.Config.Save();
         }
 
-        System.NativeController = new NativeController(Service.PluginInterface);
-        System.WindowManager = new WindowManager(Service.PluginInterface);
-
+        System.WindowSystem = new WindowSystem("CurrencyAlert");
         System.ConfigurationWindow = new ConfigurationWindow();
-        System.WindowManager.AddWindow(System.ConfigurationWindow, WindowFlags.IsConfigWindow | WindowFlags.RequireLoggedIn);
+        System.OverlayWindow = new OverlayWindow();
+        System.WindowSystem.AddWindow(System.ConfigurationWindow);
+        System.WindowSystem.AddWindow(System.OverlayWindow);
 
-        System.OverlayController = new OverlayController();
+        Service.PluginInterface.UiBuilder.Draw += System.WindowSystem.Draw;
+        Service.PluginInterface.UiBuilder.OpenConfigUi += System.ConfigurationWindow.Toggle;
+
+        Service.CommandManager.AddHandler("/currencyalert", new CommandInfo(OnCommand) {
+            HelpMessage = "Open CurrencyAlert configuration.",
+        });
+        Service.CommandManager.AddHandler("/calert", new CommandInfo(OnCommand) {
+            HelpMessage = "Open CurrencyAlert configuration.",
+        });
 
         Service.ClientState.TerritoryChanged += OnZoneChange;
         Service.Framework.Update += OnFrameworkUpdate;
@@ -41,19 +47,28 @@ public sealed class CurrencyAlertPlugin : IDalamudPlugin {
         Service.ClientState.TerritoryChanged -= OnZoneChange;
         Service.Framework.Update -= OnFrameworkUpdate;
 
-        System.CommandManager.Dispose();
-        System.WindowManager.Dispose();
-        System.OverlayController.Dispose();
-        System.NativeController.Dispose();
+        Service.PluginInterface.UiBuilder.Draw -= System.WindowSystem.Draw;
+        Service.PluginInterface.UiBuilder.OpenConfigUi -= System.ConfigurationWindow.Toggle;
+
+        Service.CommandManager.RemoveHandler("/currencyalert");
+        Service.CommandManager.RemoveHandler("/calert");
     }
+
+    private static void OnCommand(string command, string args)
+        => System.ConfigurationWindow.Toggle();
 
     private void OnFrameworkUpdate(IFramework framework) {
-        if (!Service.ClientState.IsLoggedIn) return;
+        if (!Service.ClientState.IsLoggedIn) {
+            System.OverlayWindow.IsOpen = false;
+            return;
+        }
 
-        System.OverlayController.Update();
+        System.OverlayWindow.IsOpen = System.Config.OverlayEnabled
+            && !Service.GameGui.GameUiHidden
+            && !(Service.Condition[ConditionFlag.BoundByDuty] && System.Config.HideInDuties);
     }
 
-    private void OnZoneChange(ushort e) {
+    private void OnZoneChange(uint e) {
         if (System.Config is { ChatWarning: false }) return;
 
         foreach (var currency in System.Config.Currencies.Where(currency => currency is { HasWarning: true, ChatWarning: true, Enabled: true })) {
